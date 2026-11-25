@@ -637,13 +637,13 @@
           {/* Charts Row: Revenue Trend, Top Services & Status Donut */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             {/* Revenue Trend Chart */}
-            <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
-              <div className="flex items-center justify-between gap-2 mb-4">
-                <div>
+            <div className="lg:col-span-5 min-w-0 overflow-hidden bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <div className="min-w-0">
                   <h3 className="font-bold text-slate-900 text-sm">Pertumbuhan Revenue</h3>
                   <p className="text-xs text-slate-500">Omzet layanan cuci sepatu SPATWO</p>
                 </div>
-                <div className="flex bg-slate-100 p-1 rounded-xl text-[11px] font-semibold">
+                <div className="flex bg-slate-100 p-1 rounded-xl text-[11px] font-semibold shrink-0">
                   {[
                     { id: 'daily', label: 'Harian' },
                     { id: 'weekly', label: 'Mingguan' },
@@ -662,20 +662,29 @@
                 </div>
               </div>
 
-              <div className="h-44 flex items-end gap-2 pt-6 pb-2 px-1">
+              <div className="h-48 w-full flex items-end gap-1.5 sm:gap-2 pt-8 pb-1 px-0.5">
                 {revenueSeries.map((pt) => {
-                  const heightPct = Math.max(6, Math.round((pt.value / maxRevValue) * 100));
+                  const heightPct = Math.max(8, Math.round((pt.value / maxRevValue) * 100));
+                  const compactVal =
+                    pt.value >= 1000000
+                      ? `${(pt.value / 1000000).toFixed(1)}jt`
+                      : pt.value >= 1000
+                      ? `${Math.round(pt.value / 1000)}rb`
+                      : '0';
                   return (
-                    <div key={pt.label} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end group">
-                      <span className="text-[9px] font-bold text-tosca-700 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                    <div key={pt.label} className="relative flex-1 min-w-0 flex flex-col items-center gap-1 h-full justify-end group">
+                      <div className="pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity absolute -top-7 left-1/2 -translate-x-1/2 z-20 bg-slate-900 text-white text-[10px] font-bold px-2 py-0.5 rounded-md shadow-md whitespace-nowrap">
                         {formatRupiah(pt.value)}
+                      </div>
+                      <span className="text-[9px] font-semibold text-slate-500 truncate max-w-full">
+                        {compactVal}
                       </span>
                       <div
-                        className="w-full max-w-[32px] bg-gradient-to-t from-tosca-600 to-tosca-400 rounded-t-lg transition-all duration-300 group-hover:from-slate-900 group-hover:to-slate-700"
+                        className="w-full max-w-[26px] bg-gradient-to-t from-tosca-600 to-tosca-400 rounded-t-lg transition-all duration-300 group-hover:from-slate-900 group-hover:to-slate-700"
                         style={{ height: `${heightPct}%` }}
                         title={`${pt.label}: ${formatRupiah(pt.value)}`}
                       />
-                      <span className="text-[10px] font-semibold text-slate-500">{pt.label}</span>
+                      <span className="text-[10px] font-semibold text-slate-600 truncate max-w-full">{pt.label}</span>
                     </div>
                   );
                 })}
@@ -1801,8 +1810,34 @@
     // =========================================================================
     // 5. HALAMAN TRACKING & STATUS (6-STAGE KANBAN + BEFORE/AFTER QC PHOTOS)
     // =========================================================================
+    const parseCSVLine = (line) => {
+      const result = [];
+      let cur = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') {
+            cur += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (ch === ',' && !inQuotes) {
+          result.push(cur);
+          cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      result.push(cur);
+      return result;
+    };
+
     const TrackingPage = ({
       orders,
+      customers,
+      finance,
       employees,
       selectedBranch,
       dateRange,
@@ -1810,11 +1845,16 @@
       onAdvanceStatus,
       onSetStatus,
       onAttachAfterPhoto,
+      onImportData,
+      addToast,
     }) => {
       const [viewMode, setViewMode] = useState('kanban');
       const [statusFilter, setStatusFilter] = useState('ALL');
       const [searchQuery, setSearchQuery] = useState('');
       const [previewPhotoModal, setPreviewPhotoModal] = useState(null);
+      const [exportMenuOpen, setExportMenuOpen] = useState(false);
+      const [importPreview, setImportPreview] = useState(null);
+      const importInputRef = React.useRef(null);
 
       const visibleOrders = useMemo(() => {
         return orders.filter((o) => {
@@ -1839,6 +1879,208 @@
         e.preventDefault();
         const orderId = e.dataTransfer.getData('text/plain');
         if (orderId) onSetStatus(orderId, targetStatus);
+      };
+
+      // Export JSON (Full Cross-Device Sync Package)
+      const handleExportJSON = () => {
+        setExportMenuOpen(false);
+        const payload = {
+          app: 'SPATWO-Fresh-Step-Daily',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          totalOrders: orders.length,
+          orders,
+          customers,
+          finance,
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `SPATWO-Sync-${TODAY_STR}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        addToast(
+          'Export File Sync (.JSON) Berhasil',
+          `${orders.length} data sepatu siap dipindahkan & di-import ke device lain.`
+        );
+      };
+
+      // Export CSV (Excel-compatible Spreadsheet)
+      const handleExportCSV = () => {
+        setExportMenuOpen(false);
+        const headers = [
+          'No Order',
+          'Tanggal Masuk',
+          'Est Selesai',
+          'Customer',
+          'No WA',
+          'Cabang',
+          'Jenis Item',
+          'Merk Sepatu',
+          'Warna',
+          'Layanan',
+          'Metode',
+          'Pembayaran',
+          'Total',
+          'Status',
+          'Staff ID',
+          'Catatan',
+        ];
+        const escapeCSV = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+        const rows = orders.map((o) =>
+          [
+            o.id,
+            o.dateIn,
+            o.estDone,
+            o.customerName,
+            o.customerPhone,
+            o.branchId,
+            o.shoeType,
+            o.shoeBrand,
+            o.shoeColor,
+            (o.services || []).join('; '),
+            o.method,
+            o.paymentMethod,
+            o.total,
+            o.status,
+            o.staffId,
+            o.notes,
+          ]
+            .map(escapeCSV)
+            .join(',')
+        );
+        const csvString = '\uFEFF' + [headers.join(','), ...rows].join('\n');
+        const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `SPATWO-Tracking-${TODAY_STR}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        addToast('Export Excel (.CSV) Berhasil', `${orders.length} baris order berhasil diunduh.`);
+      };
+
+      // Handle Import File Selection (.JSON or .CSV)
+      const handleImportFileChange = (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const content = String(reader.result || '').trim();
+            let parsedOrders = [];
+            let parsedCustomers = null;
+            let parsedFinance = null;
+            let exportedAt = null;
+
+            if (file.name.toLowerCase().endsWith('.json') || content.startsWith('{') || content.startsWith('[')) {
+              const json = JSON.parse(content);
+              if (Array.isArray(json)) {
+                parsedOrders = json;
+              } else if (json && Array.isArray(json.orders)) {
+                parsedOrders = json.orders;
+                if (Array.isArray(json.customers)) parsedCustomers = json.customers;
+                if (Array.isArray(json.finance)) parsedFinance = json.finance;
+                exportedAt = json.exportedAt || null;
+              } else {
+                throw new Error('Format JSON tidak dikenali');
+              }
+            } else {
+              // Parse CSV
+              const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
+              if (lines.length < 2) throw new Error('File CSV kosong');
+              const headers = parseCSVLine(lines[0]).map((h) => h.trim().toLowerCase());
+              const idxOf = (keywords) => headers.findIndex((h) => keywords.some((k) => h.includes(k)));
+
+              const iId = idxOf(['no order', 'id']);
+              const iDateIn = idxOf(['tanggal', 'datein']);
+              const iEstDone = idxOf(['est', 'selesai']);
+              const iCust = idxOf(['customer', 'pelanggan']);
+              const iPhone = idxOf(['wa', 'phone', 'hp']);
+              const iBranch = idxOf(['cabang', 'branch']);
+              const iType = idxOf(['jenis', 'type']);
+              const iBrand = idxOf(['merk', 'brand', 'sepatu']);
+              const iColor = idxOf(['warna', 'color']);
+              const iSrv = idxOf(['layanan', 'service']);
+              const iMethod = idxOf(['metode', 'method']);
+              const iPay = idxOf(['pembayaran', 'payment']);
+              const iTotal = idxOf(['total', 'harga']);
+              const iStatus = idxOf(['status']);
+              const iStaff = idxOf(['staff', 'teknisi']);
+              const iNotes = idxOf(['catatan', 'notes']);
+
+              parsedOrders = lines.slice(1).map((line, idx) => {
+                const cols = parseCSVLine(line);
+                const rawSrv = iSrv >= 0 ? cols[iSrv] : 'Fast Clean';
+                const srvArr = rawSrv
+                  ? rawSrv.split(/[;,]/).map((s) => s.trim()).filter(Boolean)
+                  : ['Fast Clean'];
+                const rawStatus = iStatus >= 0 ? cols[iStatus]?.trim() : 'Baru Masuk';
+                const validStatus = STATUS_FLOW.includes(rawStatus) ? rawStatus : 'Baru Masuk';
+
+                return {
+                  id: (iId >= 0 && cols[iId]?.trim()) || `SPW-IMP-${Date.now()}-${idx + 1}`,
+                  dateIn: (iDateIn >= 0 && cols[iDateIn]?.trim()) || TODAY_STR,
+                  estDone: (iEstDone >= 0 && cols[iEstDone]?.trim()) || TODAY_STR,
+                  customerName: (iCust >= 0 && cols[iCust]?.trim()) || 'Customer Import',
+                  customerPhone: (iPhone >= 0 && cols[iPhone]?.trim()) || '-',
+                  branchId: (iBranch >= 0 && cols[iBranch]?.trim()) || 'BR-JKS',
+                  shoeType: (iType >= 0 && cols[iType]?.trim()) || 'Sneakers',
+                  shoeBrand: (iBrand >= 0 && cols[iBrand]?.trim()) || 'Sepatu',
+                  shoeColor: (iColor >= 0 && cols[iColor]?.trim()) || 'Standard',
+                  services: srvArr.length > 0 ? srvArr : ['Fast Clean'],
+                  method: (iMethod >= 0 && cols[iMethod]?.trim()) || 'Drop Off',
+                  paymentMethod: (iPay >= 0 && cols[iPay]?.trim()) || 'QRIS',
+                  total: Number(String((iTotal >= 0 && cols[iTotal]) || 0).replace(/[^\d.-]/g, '')) || 0,
+                  status: validStatus,
+                  staffId: (iStaff >= 0 && cols[iStaff]?.trim()) || 'EMP-1',
+                  notes: (iNotes >= 0 && cols[iNotes]?.trim()) || 'Imported CSV',
+                };
+              });
+            }
+
+            const cleanOrders = parsedOrders.filter((o) => o && o.id && o.shoeBrand);
+            if (cleanOrders.length === 0) {
+              addToast('Data Kosong / Tidak Valid', 'File yang dipilih tidak memiliki data order SPATWO.', 'warn');
+              return;
+            }
+
+            const existingMap = new Map(orders.map((o) => [o.id, o]));
+            let newCount = 0;
+            let statusChangedCount = 0;
+            cleanOrders.forEach((inc) => {
+              const prev = existingMap.get(inc.id);
+              if (!prev) newCount++;
+              else if (prev.status !== inc.status) statusChangedCount++;
+            });
+
+            setImportPreview({
+              fileName: file.name,
+              exportedAt,
+              orders: cleanOrders,
+              customers: parsedCustomers,
+              finance: parsedFinance,
+              newCount,
+              statusChangedCount,
+            });
+          } catch (err) {
+            addToast('Gagal Membaca File', 'Pastikan file berformat .JSON atau .CSV hasil export SPATWO.', 'warn');
+          }
+        };
+        reader.readAsText(file);
+      };
+
+      const confirmImport = (mode) => {
+        if (!importPreview) return;
+        onImportData(importPreview, mode);
+        setImportPreview(null);
       };
 
       return (
@@ -1868,23 +2110,82 @@
               </select>
             </div>
 
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Export Dropdown & Import Button for Cross-Device Sync */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setExportMenuOpen((prev) => !prev)}
+                  className="px-3 py-2 bg-tosca-600 hover:bg-tosca-700 text-white text-xs font-bold rounded-xl inline-flex items-center gap-1.5 shadow-2xs transition-colors"
+                >
+                  <Icon name="download" size={14} /> Export
+                </button>
+                {exportMenuOpen && (
+                  <React.Fragment>
+                    <div className="fixed inset-0 z-30" onClick={() => setExportMenuOpen(false)} />
+                    <div className="absolute right-0 mt-1.5 w-60 bg-white rounded-2xl shadow-xl border border-slate-200/80 p-1.5 z-40 space-y-1">
+                      <button
+                        type="button"
+                        onClick={handleExportJSON}
+                        className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-tosca-50 transition-colors"
+                      >
+                        <p className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                          <Icon name="refresh-cw" size={13} className="text-tosca-600" /> Export Sync (.JSON)
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">
+                          File lengkap untuk update data di device lain
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleExportCSV}
+                        className="w-full text-left px-3 py-2.5 rounded-xl hover:bg-slate-50 transition-colors"
+                      >
+                        <p className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                          <Icon name="file-spreadsheet" size={13} className="text-emerald-600" /> Export Excel (.CSV)
+                        </p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">
+                          Tabel spreadsheet untuk laporan &amp; edit massal
+                        </p>
+                      </button>
+                    </div>
+                  </React.Fragment>
+                )}
+              </div>
+
               <button
-                onClick={() => setViewMode('kanban')}
-                className={`px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 ${
-                  viewMode === 'kanban' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500'
-                }`}
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl inline-flex items-center gap-1.5 shadow-2xs transition-colors"
               >
-                <Icon name="columns" size={14} /> Kanban
+                <Icon name="upload" size={14} /> Import
               </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className={`px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 ${
-                  viewMode === 'list' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500'
-                }`}
-              >
-                <Icon name="list" size={14} /> List Table
-              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".json,.csv"
+                onChange={handleImportFileChange}
+                className="hidden"
+              />
+
+              <div className="flex items-center bg-slate-100 p-1 rounded-xl text-xs font-semibold">
+                <button
+                  onClick={() => setViewMode('kanban')}
+                  className={`px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 ${
+                    viewMode === 'kanban' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500'
+                  }`}
+                >
+                  <Icon name="columns" size={14} /> Kanban
+                </button>
+                <button
+                  onClick={() => setViewMode('list')}
+                  className={`px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 ${
+                    viewMode === 'list' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500'
+                  }`}
+                >
+                  <Icon name="list" size={14} /> List Table
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2071,6 +2372,70 @@
                   </button>
                 </div>
                 <img src={previewPhotoModal.src} alt={previewPhotoModal.title} className="w-full max-h-80 object-contain rounded-xl bg-slate-100" />
+              </div>
+            </div>
+          )}
+
+          {/* Cross-Device Import Confirmation Modal */}
+          {importPreview && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4" onClick={() => setImportPreview(null)}>
+              <div className="bg-white rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl border border-slate-200" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-tosca-50 text-tosca-600">
+                      <Icon name="upload-cloud" size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">Import &amp; Sinkronisasi Data</h4>
+                      <p className="text-[11px] text-slate-500 truncate max-w-[260px]">{importPreview.fileName}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setImportPreview(null)} className="p-1 rounded-lg hover:bg-slate-100">
+                    <Icon name="x" size={16} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2.5 text-center">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/70">
+                    <p className="text-[11px] text-slate-500">Total di File</p>
+                    <p className="text-lg font-extrabold text-slate-900 mt-0.5">{importPreview.orders.length}</p>
+                  </div>
+                  <div className="bg-tosca-50/70 p-3 rounded-xl border border-tosca-100">
+                    <p className="text-[11px] text-tosca-700">Order Baru</p>
+                    <p className="text-lg font-extrabold text-tosca-700 mt-0.5">+{importPreview.newCount}</p>
+                  </div>
+                  <div className="bg-amber-50/70 p-3 rounded-xl border border-amber-100">
+                    <p className="text-[11px] text-amber-700">Update Status</p>
+                    <p className="text-lg font-extrabold text-amber-700 mt-0.5">{importPreview.statusChangedCount}</p>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Pilih metode sinkronisasi data untuk memperbarui status pengerjaan di perangkat ini:
+                </p>
+
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => confirmImport('merge')}
+                    className="w-full p-3 bg-tosca-600 hover:bg-tosca-700 text-white rounded-xl text-left transition-colors"
+                  >
+                    <p className="font-bold text-xs">Gabung &amp; Update (Merge — Rekomendasi)</p>
+                    <p className="text-[11px] text-tosca-100 mt-0.5">
+                      Menambahkan order baru &amp; memperbarui status tanpa menghapus data lokal lain.
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => confirmImport('replace')}
+                    className="w-full p-3 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-left transition-colors"
+                  >
+                    <p className="font-bold text-xs">Timpa Semua Data (Replace)</p>
+                    <p className="text-[11px] text-slate-300 mt-0.5">
+                      Menyamakan 100% seluruh data di device ini dengan isi file import.
+                    </p>
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -2719,6 +3084,36 @@
     // =========================================================================
     // 11. MAIN ENTERPRISE SHELL APPLICATION
     // =========================================================================
+    const loadLocalState = (key, fallback) => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return fallback;
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) && parsed.length > 0 ? parsed : fallback;
+      } catch (e) {
+        return fallback;
+      }
+    };
+
+    const saveLocalState = (key, value) => {
+      try {
+        localStorage.setItem(key, JSON.stringify(value));
+      } catch (e) {
+        if (Array.isArray(value)) {
+          try {
+            const compact = value.map((item) => {
+              if (item && (item.photo || item.afterPhoto)) {
+                const { photo, afterPhoto, ...rest } = item;
+                return rest;
+              }
+              return item;
+            });
+            localStorage.setItem(key, JSON.stringify(compact));
+          } catch (inner) {}
+        }
+      }
+    };
+
     const App = () => {
       const [role, setRole] = useState('owner');
       const [activeMenu, setActiveMenu] = useState('dashboard');
@@ -2730,12 +3125,11 @@
       const [services, setServices] = useState(INITIAL_SERVICES);
       const [promos, setPromos] = useState(INITIAL_PROMOS);
       const [employees] = useState(INITIAL_EMPLOYEES);
-      const [inventory, setInventory] = useState(INITIAL_INVENTORY);
-      const [customers, setCustomers] = useState(INITIAL_CUSTOMERS);
-      const [orders, setOrders] = useState(INITIAL_ORDERS);
-      const [finance, setFinance] = useState(generateInitialFinance);
+      const [inventory, setInventory] = useState(() => loadLocalState('spatwo_inventory_v1', INITIAL_INVENTORY));
+      const [customers, setCustomers] = useState(() => loadLocalState('spatwo_customers_v1', INITIAL_CUSTOMERS));
+      const [orders, setOrders] = useState(() => loadLocalState('spatwo_orders_v1', INITIAL_ORDERS));
+      const [finance, setFinance] = useState(() => loadLocalState('spatwo_finance_v1', generateInitialFinance()));
       const [toasts, setToasts] = useState([]);
-
       const [customLogo, setCustomLogo] = useState(() => {
         try { return localStorage.getItem('spatwo_custom_logo') || null; } catch (e) { return null; }
       });
@@ -2743,28 +3137,39 @@
         try { return localStorage.getItem('spatwo_custom_qr') || null; } catch (e) { return null; }
       });
       const [paymentInfoText, setPaymentInfoText] = useState(() => {
-        try { return localStorage.getItem('spatwo_payment_text') || 'Payment : LinkAja 08111110709 - BNI 0332812154'; } catch (e) { return 'Payment : LinkAja 08111110709 - BNI 0332812154'; }
+        try {
+          return localStorage.getItem('spatwo_payment_text') || 'Payment : LinkAja 08111110709 - BNI 0332812154';
+        } catch (e) {
+          return 'Payment : LinkAja 08111110709 - BNI 0332812154';
+        }
       });
 
-      const handleUpdateLogo = (dataUrl) => {
-        setCustomLogo(dataUrl);
+      useEffect(() => { saveLocalState('spatwo_orders_v1', orders); }, [orders]);
+      useEffect(() => { saveLocalState('spatwo_customers_v1', customers); }, [customers]);
+      useEffect(() => { saveLocalState('spatwo_finance_v1', finance); }, [finance]);
+      useEffect(() => { saveLocalState('spatwo_inventory_v1', inventory); }, [inventory]);
+
+      const handleUpdateLogo = (val) => {
+        setCustomLogo(val);
         try {
-          if (dataUrl) localStorage.setItem('spatwo_custom_logo', dataUrl);
+          if (val) localStorage.setItem('spatwo_custom_logo', val);
           else localStorage.removeItem('spatwo_custom_logo');
         } catch (e) {}
       };
 
-      const handleUpdateQrImage = (dataUrl) => {
-        setCustomQrImage(dataUrl);
+      const handleUpdateQrImage = (val) => {
+        setCustomQrImage(val);
         try {
-          if (dataUrl) localStorage.setItem('spatwo_custom_qr', dataUrl);
+          if (val) localStorage.setItem('spatwo_custom_qr', val);
           else localStorage.removeItem('spatwo_custom_qr');
         } catch (e) {}
       };
 
-      const handleUpdatePaymentText = (txt) => {
-        setPaymentInfoText(txt);
-        try { localStorage.setItem('spatwo_payment_text', txt); } catch (e) {}
+      const handleUpdatePaymentText = (val) => {
+        setPaymentInfoText(val);
+        try {
+          localStorage.setItem('spatwo_payment_text', val);
+        } catch (e) {}
       };
 
       const addToast = (title, message, type = 'info') => {
@@ -2880,6 +3285,93 @@
           prev.map((o) => (o.id === orderId ? { ...o, afterPhoto: dataUrl } : o))
         );
         addToast('Foto After QC Tersimpan', `Bukti foto hasil akhir untuk ${orderId} berhasil dilampirkan.`);
+      };
+
+      const handleImportData = (payload, mode) => {
+        const incomingOrders = payload.orders || [];
+        if (mode === 'replace') {
+          setOrders(incomingOrders);
+          if (Array.isArray(payload.customers) && payload.customers.length > 0) {
+            setCustomers(payload.customers);
+          }
+          if (Array.isArray(payload.finance) && payload.finance.length > 0) {
+            setFinance(payload.finance);
+          } else {
+            const rebuiltIncome = incomingOrders
+              .filter((o) => o.total > 0)
+              .map((o, idx) => ({
+                id: `FIN-IMP-${idx + 1}`,
+                date: o.dateIn,
+                type: 'INCOME',
+                category: 'Pendapatan Cuci Sepatu',
+                description: `${o.id} • ${o.customerName} (${o.shoeBrand})`,
+                branchId: o.branchId,
+                amount: o.total,
+              }));
+            setFinance((prev) => [
+              ...rebuiltIncome,
+              ...prev.filter((tx) => tx.type === 'EXPENSE'),
+            ]);
+          }
+          addToast(
+            'Replace Data Berhasil',
+            `${incomingOrders.length} data sepatu berhasil dimuat ke perangkat ini.`
+          );
+          return;
+        }
+
+        // Merge mode: update existing orders by ID & prepend newly added ones
+        const incomingMap = new Map(incomingOrders.map((o) => [o.id, o]));
+        const updatedExisting = orders.map((existing) =>
+          incomingMap.has(existing.id) ? { ...existing, ...incomingMap.get(existing.id) } : existing
+        );
+        const existingIds = new Set(orders.map((o) => o.id));
+        const brandNewOrders = incomingOrders.filter((o) => !existingIds.has(o.id));
+        setOrders([...brandNewOrders, ...updatedExisting]);
+
+        if (Array.isArray(payload.customers) && payload.customers.length > 0) {
+          setCustomers((prev) => {
+            const map = new Map(prev.map((c) => [c.name.toLowerCase(), c]));
+            payload.customers.forEach((inc) => {
+              const key = inc.name.toLowerCase();
+              const cur = map.get(key);
+              if (!cur) {
+                map.set(key, inc);
+              } else {
+                map.set(key, {
+                  ...cur,
+                  ...inc,
+                  totalWashes: Math.max(cur.totalWashes || 0, inc.totalWashes || 0),
+                  totalSpend: Math.max(cur.totalSpend || 0, inc.totalSpend || 0),
+                  lastWash: (inc.lastWash || '') > (cur.lastWash || '') ? inc.lastWash : cur.lastWash,
+                });
+              }
+            });
+            return Array.from(map.values());
+          });
+        }
+
+        if (brandNewOrders.length > 0) {
+          setFinance((prev) => {
+            const newTx = brandNewOrders
+              .filter((o) => o.total > 0)
+              .map((o, idx) => ({
+                id: `FIN-SYNC-${Date.now()}-${idx}`,
+                date: o.dateIn,
+                type: 'INCOME',
+                category: 'Pendapatan Cuci Sepatu',
+                description: `${o.id} • ${o.customerName} (${o.shoeBrand})`,
+                branchId: o.branchId,
+                amount: o.total,
+              }));
+            return [...newTx, ...prev];
+          });
+        }
+
+        addToast(
+          'Sinkronisasi Merge Selesai',
+          `${payload.newCount} order baru ditambahkan & ${payload.statusChangedCount} status diperbarui.`
+        );
       };
 
       const activeMenuObj = menuItems.find((m) => m.id === activeMenu) || menuItems[0];
@@ -3119,6 +3611,8 @@
               {activeMenu === 'tracking' && (
                 <TrackingPage
                   orders={orders}
+                  customers={customers}
+                  finance={finance}
                   employees={employees}
                   selectedBranch={selectedBranch}
                   dateRange={dateRange}
@@ -3126,6 +3620,8 @@
                   onAdvanceStatus={handleAdvanceStatus}
                   onSetStatus={handleSetStatus}
                   onAttachAfterPhoto={handleAttachAfterPhoto}
+                  onImportData={handleImportData}
+                  addToast={addToast}
                 />
               )}
               {activeMenu === 'customers' && (
