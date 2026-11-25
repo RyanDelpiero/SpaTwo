@@ -875,13 +875,15 @@
                   <div key={b.id} className="p-4 flex items-center justify-between gap-3">
                     <div>
                       <p className="font-bold text-slate-900 text-xs">{b.name}</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        {b.totalOrders} Sepatu • Avg {b.avgHours} jam • ⭐ {b.rating}
-                      </p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">{b.address}</p>
+                      <div className="flex items-center gap-3 mt-1.5 text-[11px] text-slate-600">
+                        <span>SLA: <strong>{b.avgHours} jam</strong></span>
+                        <span>Rating: <strong>⭐ {b.rating}</strong></span>
+                      </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right shrink-0">
                       <p className="font-extrabold text-tosca-700 text-sm">{formatRupiah(b.revenue)}</p>
-                      <span className="text-[10px] text-slate-400">Omzet Terkumpul</span>
+                      <p className="text-[11px] text-slate-500">{b.totalOrders} pasang</p>
                     </div>
                   </div>
                 ))}
@@ -893,7 +895,7 @@
     };
 
     // =========================================================================
-    // 4. HALAMAN ORDER / POS (POINT OF SALE — MULTI-SHOE CART + HD E-INVOICE)
+    // 4. HALAMAN ORDER / POS KASIR (MULTI-SEPATU, E-INVOICE & BARCODE SCAN)
     // =========================================================================
     const POSPage = ({
       orders,
@@ -912,33 +914,105 @@
     }) => {
       const [customerName, setCustomerName] = useState('');
       const [customerPhone, setCustomerPhone] = useState('');
-      const [branchId, setBranchId] = useState(selectedBranch === 'ALL' ? 'BR-JKS' : selectedBranch);
+      const [branchId, setBranchId] = useState(
+        selectedBranch !== 'ALL' ? selectedBranch : branches[0]?.id || 'BR-JKS'
+      );
       const [shoeType, setShoeType] = useState('Sneakers');
       const [shoeBrand, setShoeBrand] = useState('');
       const [shoeColor, setShoeColor] = useState('');
       const [selectedServices, setSelectedServices] = useState(['Fast Clean']);
+      const [cartItems, setCartItems] = useState([]);
       const [photoPreview, setPhotoPreview] = useState(null);
       const [estDays, setEstDays] = useState(2);
       const [method, setMethod] = useState('Drop Off');
       const [paymentMethod, setPaymentMethod] = useState('QRIS');
       const [promoCode, setPromoCode] = useState('');
-      const [staffId, setStaffId] = useState(employees.find((e) => e.role.includes('Staff') || e.role.includes('Technician'))?.id || 'EMP-1');
+      const [staffId, setStaffId] = useState(employees[0]?.id || 'EMP-1');
       const [notes, setNotes] = useState('');
-      const [cartItems, setCartItems] = useState([]);
-      const [latestReceipt, setLatestReceipt] = useState(null);
       const [scanInput, setScanInput] = useState('');
+      const [latestReceipt, setLatestReceipt] = useState(null);
 
       useEffect(() => {
-        if (selectedBranch !== 'ALL') setBranchId(selectedBranch);
+        if (selectedBranch !== 'ALL') {
+          setBranchId(selectedBranch);
+        }
       }, [selectedBranch]);
 
       const handleSelectExistingCustomer = (custId) => {
+        if (!custId) return;
         const found = customers.find((c) => c.id === custId);
         if (found) {
           setCustomerName(found.name);
           setCustomerPhone(found.phone);
-          setBranchId(found.branchId);
+          if (found.branchId) setBranchId(found.branchId);
+          addToast('Member Dipilih', `Data ${found.name} (${found.tier}) dimuat otomatis.`);
         }
+      };
+
+      const buildWhatsAppReceiptText = (ord) => {
+        const branchName = branches.find((b) => b.id === ord.branchId)?.name || 'SPATWO Jakarta Selatan (TSO)';
+        const receiptItems =
+          ord.items && ord.items.length > 0
+            ? ord.items
+            : [{ shoeBrand: ord.shoeBrand, shoeType: ord.shoeType, shoeColor: ord.shoeColor, services: ord.services }];
+
+        const itemLine =
+          receiptItems.length === 1
+            ? `${receiptItems[0].shoeBrand} (${receiptItems[0].shoeType}${
+                receiptItems[0].shoeColor ? ` - ${receiptItems[0].shoeColor}` : ''
+              })`
+            : receiptItems
+                .map(
+                  (it, idx) =>
+                    `${idx + 1}. ${it.shoeBrand} (${it.shoeType}${it.shoeColor ? ` - ${it.shoeColor}` : ''})`
+                )
+                .join(', ');
+
+        const serviceLine =
+          receiptItems.length === 1
+            ? receiptItems[0].services.join(', ')
+            : [...new Set(receiptItems.flatMap((it) => it.services))].join(', ');
+
+        return [
+          '*STRUK DIGITAL — SPATWO Fresh Step Daily*',
+          `Outlet: ${branchName}`,
+          '--------------------------------',
+          `No. Order   : *${ord.id}*`,
+          `Customer    : ${ord.customerName}`,
+          `Item        : ${itemLine}`,
+          `Layanan     : ${serviceLine}`,
+          `Metode      : ${ord.method} • ${ord.paymentMethod}`,
+          `Total       : *${formatRupiah(ord.total)}*`,
+          `Est. Selesai: *${ord.estDone}*`,
+          '--------------------------------',
+          paymentInfoText,
+          'Terima kasih telah mempercayakan sepatu Anda di SPATWO!',
+        ].join('\n');
+      };
+
+      const handleSendReceiptWhatsApp = (ord) => {
+        const receiptText = buildWhatsAppReceiptText(ord);
+        openWhatsAppMessage(ord.customerPhone, receiptText);
+        addToast(
+          'Membuka WhatsApp Pelanggan...',
+          `Template struk ${ord.id} siap dikirim ke ${ord.customerName} (${ord.customerPhone}).`,
+          'wa'
+        );
+      };
+
+      const handleCopyReceiptText = (ord) => {
+        const receiptText = buildWhatsAppReceiptText(ord);
+        const textarea = document.createElement('textarea');
+        textarea.value = receiptText;
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand('copy');
+          addToast('Teks Struk Tersalin', 'Format struk digital berhasil disalin ke clipboard.');
+        } catch (err) {
+          addToast('Gagal Menyalin', 'Silakan gunakan tombol Kirim WA langsung.', 'warn');
+        }
+        document.body.removeChild(textarea);
       };
 
       const toggleService = (srvName) => {
@@ -1270,22 +1344,6 @@
         setShoeColor('');
         setNotes('');
         setPhotoPreview(null);
-      };
-
-      const handleSendReceiptWhatsApp = async (ord) => {
-        const blob = await generateReceiptCanvasBlob(ord);
-        if (blob && navigator.clipboard && window.ClipboardItem) {
-          try {
-            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-          } catch (e) {}
-        }
-        const shortCaption = `Halo ${ord.customerName}, berikut E-Invoice resmi perawatan sepatu Anda di *SPATWO — Fresh Step Daily* (No. Order: *${ord.id}*, Est. Selesai: *${ord.estDone}*). Terima kasih!`;
-        openWhatsAppMessage(ord.customerPhone, shortCaption);
-        addToast(
-          'Membuka Chat WhatsApp...',
-          'Gambar E-Invoice sudah tersalin — silakan tekan Paste / Tempel di kolom chat pelanggan.',
-          'wa'
-        );
       };
 
       const handleDownloadReceiptPNG = async (ord) => {
@@ -1648,7 +1706,9 @@
                           {latestReceipt.items.map((it, idx) => (
                             <div key={idx} className="flex justify-between items-start gap-2">
                               <div>
-                                <p className="font-bold text-slate-900">{idx + 1}. {it.shoeBrand}</p>
+                                <p className="font-bold text-slate-900">
+                                  {idx + 1}. {it.shoeBrand} ({it.shoeType}{it.shoeColor ? ` - ${it.shoeColor}` : ''})
+                                </p>
                                 <p className="text-[11px] text-tosca-700">{it.services.join(', ')}</p>
                               </div>
                               <span className="font-semibold text-slate-800">{formatRupiah(it.price)}</span>
@@ -1659,7 +1719,9 @@
                         <React.Fragment>
                           <div className="flex justify-between">
                             <span className="text-slate-500">Item Sepatu</span>
-                            <span className="font-bold text-slate-900">{latestReceipt.shoeBrand} ({latestReceipt.shoeType})</span>
+                            <span className="font-bold text-slate-900">
+                              {latestReceipt.shoeBrand} ({latestReceipt.shoeType}{latestReceipt.shoeColor ? ` - ${latestReceipt.shoeColor}` : ''})
+                            </span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-500">Layanan</span>
@@ -1698,25 +1760,32 @@
                   </div>
 
                   {/* Receipt Action Buttons */}
-                  <div className="p-4 bg-slate-50 border-t border-slate-200/80 grid grid-cols-3 gap-2">
+                  <div className="p-4 bg-slate-50 border-t border-slate-200/80 grid grid-cols-4 gap-2">
                     <button
                       type="button"
                       onClick={() => window.print()}
-                      className="px-3 py-2.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 text-xs font-bold rounded-xl inline-flex items-center justify-center gap-1.5"
+                      className="px-2.5 py-2.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 text-xs font-bold rounded-xl inline-flex items-center justify-center gap-1"
                     >
                       <Icon name="printer" size={14} /> Cetak
                     </button>
                     <button
                       type="button"
+                      onClick={() => handleCopyReceiptText(latestReceipt)}
+                      className="px-2.5 py-2.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-200 text-xs font-bold rounded-xl inline-flex items-center justify-center gap-1"
+                    >
+                      <Icon name="copy" size={14} /> Salin
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handleDownloadReceiptPNG(latestReceipt)}
-                      className="px-3 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl inline-flex items-center justify-center gap-1.5"
+                      className="px-2.5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl inline-flex items-center justify-center gap-1"
                     >
                       <Icon name="download" size={14} /> PNG
                     </button>
                     <button
                       type="button"
                       onClick={() => handleSendReceiptWhatsApp(latestReceipt)}
-                      className="px-3 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl inline-flex items-center justify-center gap-1.5"
+                      className="px-2.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl inline-flex items-center justify-center gap-1"
                     >
                       <Icon name="send" size={14} /> Kirim WA
                     </button>
